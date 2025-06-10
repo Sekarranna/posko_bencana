@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Pemetaan Posko Evakuasi Bencana Gempa Bumi Bantul (Real-time)</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background-color: #2196f3;
+    }
+
+    .header {
+      background-color: #0d47a1;
+      color: white;
+      padding: 15px 20px;
+      font-size: 1.8em;
+      font-weight: bold;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    #map {
+      height: 500px;
+      width: 90%;
+      margin: 20px auto;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .info-panel {
+      width: 90%;
+      margin: 10px auto;
+      background: white;
+      padding: 15px 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      font-size: 1.1em;
+    }
+
+    .info-panel div {
+      margin: 5px 10px;
+    }
+
+    .instruction {
+      width: 90%;
+      margin: 10px auto 20px auto;
+      background-color: #0d47a1;
+      color: white;
+      padding: 10px 15px;
+      border-radius: 10px;
+      font-size: 0.95em;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">📍 PEMETAAN POSKO EVAKUASI BENCANA GEMPA BUMI BANTUL (Real-time)</div>
+  <div id="map"></div>
+
+  <div class="info-panel">
+    <div><strong>Jumlah Pengguna Terkoneksi:</strong> <span id="userCount">0</span></div>
+    <div><strong>Latitude:</strong> <span id="currentLat">-</span></div>
+    <div><strong>Longitude:</strong> <span id="currentLng">-</span></div>
+  </div>
+
+  <div class="instruction">
+    🖱️ Drag marker untuk mengubah lokasi posko. Semua perubahan disinkronkan secara real-time ke semua pengguna.
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    const socket = io();
+    const map = L.map('map').setView([-7.801194, 110.364917], 13);
+
+    // Tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19
+    }).addTo(map);
+
+ // Pusat gempa di Kali Opak
+const pusatGempa = [-7.9333, 110.3833];
+
+// Zona 1 (bahaya tinggi, radius 3 km)
+L.circle(pusatGempa, {
+  color: '#d32f2f',
+  fillColor: '#d32f2f',
+  fillOpacity: 0.4,
+  radius: 3000
+}).addTo(map).bindPopup("Zona Bahaya Tinggi");
+
+// Zona 2 (bahaya sedang, radius 6 km)
+L.circle(pusatGempa, {
+  color: '#f57c00',
+  fillColor: '#f57c00',
+  fillOpacity: 0.3,
+  radius: 6000
+}).addTo(map).bindPopup("Zona Bahaya Sedang");
+
+// Zona 3 (bahaya rendah, radius 10 km)
+L.circle(pusatGempa, {
+  color: '#fbc02d',
+  fillColor: '#fbc02d',
+  fillOpacity: 0.2,
+  radius: 10000
+}).addTo(map).bindPopup("Zona Bahaya Rendah");
+
+    const redMarkerIcon = L.icon({
+      iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+
+    let marker = null;
+    let isConnected = false;
+    let isUpdatingFromSocket = false;
+
+    // Inisialisasi marker dari socket
+    socket.on('markerInit', (data) => {
+      const { lat, lng } = data.position;
+
+      if (marker) {
+        marker.setLatLng([lat, lng]);
+      } else {
+        marker = L.marker([lat, lng], {
+          draggable: true,
+          icon: redMarkerIcon,
+          title: 'Drag untuk sinkronisasi!'
+        }).addTo(map);
+
+        marker.bindPopup('🚀 Drag untuk sinkronisasi!').openPopup();
+
+        marker.on('dragend', (e) => {
+          const pos = e.target.getLatLng();
+          updateCoordinateDisplay(pos.lat, pos.lng);
+          if (isConnected && !isUpdatingFromSocket) {
+            socket.emit('markerMove', { lat: pos.lat, lng: pos.lng });
+          }
+          marker.bindPopup('✅ Posisi sudah sinkron!').openPopup();
+          setTimeout(() => marker.closePopup(), 2000);
+        });
+      }
+
+      map.setView([lat, lng], 13);
+      updateCoordinateDisplay(lat, lng);
+    });
+
+    socket.on('markerMove', (data) => {
+      if (!marker) return;
+      isUpdatingFromSocket = true;
+      marker.setLatLng([data.lat, data.lng]);
+      updateCoordinateDisplay(data.lat, data.lng);
+      setTimeout(() => {
+        isUpdatingFromSocket = false;
+      }, 100);
+    });
+
+    socket.on('userCount', (count) => {
+      document.getElementById('userCount').textContent = count;
+    });
+
+    socket.on('connect', () => { isConnected = true; });
+    socket.on('disconnect', () => { isConnected = false; });
+
+    function updateCoordinateDisplay(lat, lng) {
+      document.getElementById('currentLat').textContent = lat.toFixed(6);
+      document.getElementById('currentLng').textContent = lng.toFixed(6);
+    }
+  </script>
+</body>
+</html>
